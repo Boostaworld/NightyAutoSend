@@ -11,8 +11,6 @@ def send_message_script():
     from dataclasses import dataclass
     from typing import Dict, Optional
 
-    import discord
-
     # ---------------------------------------------------------------------
     # Data models & helpers
     # ---------------------------------------------------------------------
@@ -72,7 +70,7 @@ def send_message_script():
                     try:
                         await channel.send(task.message)
                     except Exception as exc:  # pragma: no cover - runtime safeguard
-                        print(f"[{task.name}] Error sending message: {exc}", type_="ERROR")
+                        print(f"[{task.name}] Error sending message: {exc}")
                     await asyncio.sleep(task.delay)
 
             if task.name in self.running:
@@ -105,19 +103,40 @@ def send_message_script():
 
     manager = TaskManager()
 
-    def build_embed(
+    INFO_ICON = ":information_source:"
+    SUCCESS_ICON = ":white_check_mark:"
+    WARNING_ICON = ":warning:"
+    ERROR_ICON = ":x:"
+
+    def build_message(
         *,
         title: str,
-        description: str,
-        color: int,
-        fields: Optional[Dict[str, str]] = None,
-    ) -> discord.Embed:
-        embed = discord.Embed(title=title, description=description, color=color)
-        if fields:
-            for name, value in fields.items():
-                embed.add_field(name=name, value=value, inline=True)
-        embed.set_footer(text="Message Scheduler • .sendmessages help for usage")
-        return embed
+        body: str = "",
+        highlights: Optional[Dict[str, str]] = None,
+        footer: Optional[str] = "Message Scheduler — try `.sendmessages help`",
+        icon: str = INFO_ICON,
+    ) -> str:
+        lines = [f"{icon} **{title}**"]
+
+        body = body.strip()
+        if body:
+            lines.append(body)
+
+        if highlights:
+            for name, value in highlights.items():
+                value_lines = str(value).splitlines() or [""]
+                if len(value_lines) == 1:
+                    lines.append(f"> **{name}:** {value_lines[0]}")
+                else:
+                    lines.append(f"> **{name}:**")
+                    for line in value_lines:
+                        lines.append(f"> {line}")
+
+        if footer:
+            lines.append("")
+            lines.append(f"*{footer}*")
+
+        return "\n".join(lines)
 
     def format_delay(seconds: float) -> str:
         seconds = float(seconds)
@@ -156,17 +175,18 @@ def send_message_script():
             message=message,
         )
 
-    def help_embed() -> discord.Embed:
+    def help_message() -> str:
         lines = [
-            "`.sendmessages <name>, \"\"\"<message>\"\"\", <channel>, <delay>`",
+            "`.sendmessages <name>, \"\"\"<message>\"\"\", <channel>, <delay_seconds>`",
             "`.stoptask <name>`",
             "`.listtasks`",
+            "`.taskinfo <name>`",
         ]
-        return build_embed(
+        return build_message(
             title="Message Scheduler Help",
-            description="Quick reference for managing repeating messages.",
-            color=0x5865F2,
-            fields={"Commands": "\n".join(lines)},
+            body="Here are the available commands:",
+            highlights={"Commands": "\n".join(lines)},
+            icon=INFO_ICON,
         )
 
     # ------------------------------------------------------------------
@@ -180,72 +200,75 @@ def send_message_script():
         await ctx.message.delete()
 
         if not args.strip() or args.strip().lower() in {"help", "?"}:
-            return await ctx.send(embed=help_embed(), delete_after=20)
+            return await ctx.send(help_message(), delete_after=20)
 
         try:
             task = parse_definition(args)
             existing = manager.get(task.name)
             if existing:
-                embed = build_embed(
+                message = build_message(
                     title="Task name already in use",
-                    description=f"A task called `{task.name}` already exists."
-                    " Choose another name or stop the existing one first.",
-                    color=0xFEE75C,
-                    fields={
+                    body=(
+                        f"A task called `{task.name}` already exists. Choose another name or"
+                        " stop the existing task first."
+                    ),
+                    highlights={
                         "Current target": f"<#{existing.channel_id}>",
                         "Delay": format_delay(existing.delay),
                     },
+                    icon=WARNING_ICON,
                 )
-                return await ctx.send(embed=embed, delete_after=15)
+                return await ctx.send(message, delete_after=15)
 
             await manager.start(ctx, task)
 
             preview = (task.message[:150] + "…") if len(task.message) > 150 else task.message
-            embed = build_embed(
+            preview_block = f"```{preview}```" if preview else "(message is empty)"
+            message = build_message(
                 title="Task scheduled!",
-                description=f"`{task.name}` will post on repeat.",
-                color=0x57F287,
-                fields={
+                body=f"`{task.name}` will now post on repeat.",
+                highlights={
                     "Channel": f"<#{task.channel_id}>",
                     "Interval": format_delay(task.delay),
-                    "Preview": preview or "(message is empty)",
+                    "Preview": preview_block,
                 },
+                icon=SUCCESS_ICON,
             )
-            await ctx.send(embed=embed, delete_after=20)
+            await ctx.send(message, delete_after=20)
 
         except Exception as exc:
-            embed = build_embed(
+            message = build_message(
                 title="Could not schedule task",
-                description=str(exc),
-                color=0xED4245,
+                body=str(exc),
+                icon=ERROR_ICON,
             )
-            await ctx.send(embed=embed, delete_after=15)
+            await ctx.send(message, delete_after=15)
 
     @bot.command(name="stoptask", description="Stops a running sendmessages task.")
     async def stop_task(ctx, *, name: str = ""):
         await ctx.message.delete()
 
         if not name.strip():
-            embed = build_embed(
+            message = build_message(
                 title="Task name required",
-                description="Usage: `.stoptask <name>`",
-                color=0xFEE75C,
+                body="Usage: `.stoptask <name>`",
+                icon=WARNING_ICON,
             )
-            return await ctx.send(embed=embed, delete_after=12)
+            return await ctx.send(message, delete_after=12)
 
         if manager.stop(name):
-            embed = build_embed(
+            message = build_message(
                 title="Task stopped",
-                description=f"`{name}` will no longer send messages.",
-                color=0xED4245,
+                body=f"`{name}` will no longer send messages.",
+                icon=SUCCESS_ICON,
             )
         else:
-            embed = build_embed(
+            message = build_message(
                 title="Task not found",
-                description=f"No task called `{name}` exists.",
-                color=0xFEE75C,
+                body=f"No task called `{name}` exists.",
+                icon=WARNING_ICON,
             )
-        await ctx.send(embed=embed, delete_after=12)
+        await ctx.send(message, delete_after=12)
 
     @bot.command(name="listtasks", description="Lists all active message tasks.")
     async def list_tasks(ctx):
@@ -253,12 +276,11 @@ def send_message_script():
 
         tasks = manager.list()
         if not tasks:
-            embed = build_embed(
+            message = build_message(
                 title="No active tasks",
-                description="Use `.sendmessages` to start one.",
-                color=0x5865F2,
+                body="Use `.sendmessages` to start one.",
             )
-            return await ctx.send(embed=embed, delete_after=12)
+            return await ctx.send(message, delete_after=12)
 
         description_lines = []
         for task in tasks.values():
@@ -266,45 +288,46 @@ def send_message_script():
                 f"**{task.name}** • {format_delay(task.delay)} • <#{task.channel_id}>"
             )
 
-        embed = build_embed(
+        message = build_message(
             title="Active message tasks",
-            description="\n".join(description_lines),
-            color=0x5865F2,
+            body="\n".join(description_lines),
         )
-        await ctx.send(embed=embed, delete_after=20)
+        await ctx.send(message, delete_after=20)
 
     @bot.command(name="taskinfo", description="Shows message contents for a scheduled task.")
     async def task_info(ctx, *, name: str = ""):
         await ctx.message.delete()
 
         if not name.strip():
-            embed = build_embed(
+            message = build_message(
                 title="Task name required",
-                description="Usage: `.taskinfo <name>`",
-                color=0xFEE75C,
+                body="Usage: `.taskinfo <name>`",
+                icon=WARNING_ICON,
             )
-            return await ctx.send(embed=embed, delete_after=12)
+            return await ctx.send(message, delete_after=12)
 
         task = manager.get(name)
         if not task:
-            embed = build_embed(
+            message = build_message(
                 title="Task not found",
-                description=f"No task called `{name}` exists.",
-                color=0xED4245,
+                body=f"No task called `{name}` exists.",
+                icon=WARNING_ICON,
             )
-            return await ctx.send(embed=embed, delete_after=12)
+            return await ctx.send(message, delete_after=12)
 
-        embed = build_embed(
+        message_preview = task.message or "(message is empty)"
+        message_block = f"```{message_preview}```" if message_preview else "(message is empty)"
+        message = build_message(
             title=f"Details for `{name}`",
-            description="Preview of the repeating message.",
-            color=0x57F287,
-            fields={
+            body="Here is the current message preview:",
+            highlights={
                 "Channel": f"<#{task.channel_id}>",
                 "Interval": format_delay(task.delay),
+                "Message": message_block,
             },
+            icon=SUCCESS_ICON,
         )
-        embed.add_field(name="Message", value=task.message or "(message is empty)", inline=False)
-        await ctx.send(embed=embed, delete_after=30)
+        await ctx.send(message, delete_after=30)
 
 
 # Register the script
