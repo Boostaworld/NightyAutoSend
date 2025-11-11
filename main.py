@@ -149,24 +149,43 @@ def send_message_script():
         return f"{int(hours)}h {int(minutes)}m"
 
     def parse_definition(args: str) -> ScheduledTask:
-        parts = [p.strip() for p in args.split(",", 3)]
-        if len(parts) != 4:
+        # Expected format: <name>, """<message>""", <channel>, <delay_seconds>
+        if "," not in args:
             raise ValueError(
                 "Format: <name>, \"\"\"<message>\"\"\", <channel>, <delay_seconds>"
             )
 
-        name = parts[0].strip('" ')
-        raw_message = parts[1]
-        if raw_message.startswith('"""') and raw_message.endswith('"""'):
-            message = raw_message[3:-3]
-        else:
+        name_token, remainder = args.split(",", 1)
+        name = name_token.strip().strip('"')
+        remainder = remainder.lstrip()
+
+        if not remainder.startswith('"""'):
             raise ValueError('Message must be wrapped in triple quotes (""" ... """).')
 
-        channel_token = parts[2].strip()
+        end_index = remainder.find('"""', 3)
+        if end_index == -1:
+            raise ValueError('Message must be wrapped in triple quotes (""" ... """).')
+
+        message = remainder[3:end_index]
+        remainder = remainder[end_index + 3 :].lstrip()
+
+        if not remainder.startswith(","):
+            raise ValueError(
+                "Format: <name>, \"\"\"<message>\"\"\", <channel>, <delay_seconds>"
+            )
+
+        remainder = remainder[1:].lstrip()
+        parts = [part.strip() for part in remainder.split(",", 1)]
+        if len(parts) != 2:
+            raise ValueError(
+                "Format: <name>, \"\"\"<message>\"\"\", <channel>, <delay_seconds>"
+            )
+
+        channel_token, delay_token = parts
         if channel_token.startswith("<#") and channel_token.endswith(">"):
             channel_token = channel_token[2:-1]
 
-        delay = float(parts[3])
+        delay = float(delay_token)
 
         return ScheduledTask(
             name=name,
